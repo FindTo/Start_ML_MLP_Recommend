@@ -4,7 +4,9 @@ import torch
 import torch.nn as nn
 from torch.utils.data import Dataset, DataLoader, random_split
 from torch.optim import Adam
-from sklearn.metrics import f1_score, roc_curve, RocCurveDisplay, auc, accuracy_score, roc_auc_score
+from sklearn.metrics import (accuracy_score,
+                             roc_auc_score,
+                             average_precision_score)
 from tqdm import tqdm
 import matplotlib.pyplot as plt
 from IPython.display import clear_output
@@ -282,23 +284,23 @@ def create_nn_to_classify():
 
             self.fc1 = nn.Sequential(
 
-                nn.Linear(173, 128),
-                nn.BatchNorm1d(128),
+                nn.Linear(173, 256),
+                nn.BatchNorm1d(256),
                 nn.ReLU(),
                 nn.Dropout(p=0.3),
             )
 
             self.fc2 = nn.Sequential(
 
-                nn.Linear(128, 128),
-                nn.BatchNorm1d(128),
+                nn.Linear(256, 256),
+                nn.BatchNorm1d(256),
                 nn.ReLU(),
-                nn.Dropout(p=0.3),
             )
 
             self.fc3 = nn.Sequential(
 
-                nn.Linear(128, 64),
+                nn.Dropout(p=0.3),
+                nn.Linear(256, 64),
                 nn.BatchNorm1d(64),
                 nn.ReLU(),
                 nn.Dropout(p=0.3),
@@ -306,11 +308,11 @@ def create_nn_to_classify():
 
             self.output = nn.Sequential(
 
-                nn.Linear(64, 16),
-                nn.BatchNorm1d(16),
+                nn.Linear(64, 32),
+                nn.BatchNorm1d(32),
                 nn.ReLU(),
                 nn.Dropout(p=0.2),
-                nn.Linear(16, 1),
+                nn.Linear(32, 1),
             )
 
 
@@ -346,6 +348,28 @@ def _metrics(preds, y):
     roc = roc_auc_score(y_true, y_pred)
     return acc, roc
 
+class FocalLoss(nn.Module):
+    def __init__(self, alpha: float = 0.2, gamma: float = 2.0, reduction: str = "mean"):
+        super().__init__()
+        self.alpha = alpha
+        self.gamma = gamma
+        self.reduction = reduction
+
+    def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
+        if inputs.ndim > 1:
+            inputs = inputs.squeeze(-1)
+        probs = torch.sigmoid(inputs)
+        p_t = probs * targets + (1 - probs) * (1 - targets)
+        alpha_t = self.alpha * targets + (1 - self.alpha) * (1 - targets)
+        focal_factor = (1 - p_t) ** self.gamma
+        bce = - (targets * torch.log(probs + 1e-8) + (1 - targets) * torch.log(1 - probs + 1e-8))
+        loss = alpha_t * focal_factor * bce
+        if self.reduction == "mean":
+            return loss.mean()
+        elif self.reduction == "sum":
+            return loss.sum()
+        else:
+            return loss
 
 # Train cycle of NN
 def train(model, train_loader, device, optimizer, loss_fn)-> tuple[float, float, float]:
@@ -458,9 +482,11 @@ def whole_train_valid_cycle(model,
     train_accuracy_history, valid_accuracy_history = [], []
     train_roc_history, valid_roc_history = [], []
 
-    # For imbalanced classes - 20% of likes - set pos_weight
-    pos_weight = torch.tensor([4.0]).to(device)
+    # For imbalanced classes - 21% of likes - set pos_weight
+    pos_weight = torch.tensor([3.8]).to(device)
     loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+    # loss_fn = FocalLoss()
 
     for epoch in range(num_epochs):
         train_loss, train_accuracy, train_roc = train(model, train_loader, device, optimizer, loss_fn)
@@ -515,74 +541,66 @@ def get_embedd_df(is_csv=False, sep=';'):
 # Obtaining DF with vector of all features for NN learning
 def get_vector_df(df_embedd:pd.DataFrame, feed_n_lines=1024000):
 
-    # Установка соединения с базой данных
+    # Get DB connection and download necessary tables
     user = get_user_df()
     post = get_post_df()
     feed = pd.read_sql(f"SELECT * FROM public.feed_data order by random() LIMIT {feed_n_lines};", os.getenv('DATABASE_URL'))
     feed = feed.drop_duplicates()
     print(feed.head())
 
-    # Поработаем с категориальными колонками для таблицы new_user. Колонку exp_group тоже считаем как категориальную
-
-    new_user = user.drop('city', axis=1)
-
+    # Working with User table
+    # Choose categorial features
     categorical_columns = []
     categorical_columns.append('country')
     # categorical_columns.append('os')
     # categorical_columns.append('source')
-    categorical_columns.append('exp_group')  # разобью по группам категориальный признак
+    categorical_columns.append('exp_group')
 
-    # Добавил булевый признак по главным городам в представленных странах, остальных городов слишком много
+    # Bool feature for cities: just separate capitals and other cities
     capitals = ['Moscow', 'Saint Petersburg', 'Kyiv', 'Minsk', 'Baku', 'Almaty', 'Astana', 'Helsinki',
                 'Istanbul', 'Ankara', 'Riga', 'Nicosia', 'Limassol', 'Zurich', 'Bern', 'Tallin']
-    cap_bool = user.city.apply(lambda x: 1 if x in capitals else 0)
 
-    # добавил признак по главным городам в представленных странах
-    new_user = pd.concat([new_user, cap_bool], axis=1, join='inner')
-    new_user = new_user.rename(columns={"city": "city_capital"})
+    user.city = user.city.apply(lambda x: 1 if x in capitals else 0)
+    user = user.rename(columns={"city": "city_capital"})
 
-    # Выбираем только числовые столбцы для преобразования
-    numeric_columns = new_user.select_dtypes(include=['float64', 'int64', 'float32', 'int32']).columns
+    # Choose numerical features
+    numeric_columns = user.select_dtypes(include=['float64', 'int64', 'float32', 'int32']).columns
 
-    # Преобразуем только числовые столбцы в float32
-    new_user[numeric_columns] = new_user[numeric_columns].astype('float32')
+    # Convert it to float32
+    user[numeric_columns] = user[numeric_columns].astype('float32')
 
-    # готовая таблица User для обучения
-    new_user.head()
-    num_user_full = new_user['user_id'].nunique()
-    print(f'Число уникальных юзеров:{num_user_full}')
+    # Ready User table
+    print(user.head())
+    print(f'Number of the unique users:{user['user_id'].nunique()}')
 
-    # Длина текста поста - новый признак для таблицы Post
+    # Working with Post table
+    # Text length - new Post feature
     post['text_length'] = post['text'].apply(len)
-    # post = post.rename(columns={"text": "text_feature"})
 
-    # Убираем исходные тексты из признаков
+    # Remove text columns
     post = post.drop(['text'], axis=1)
 
-    # Конкатенирую с топом эмбеддингов, максимально вносящих вклад в PCA фичи
+    # Merge with embedding features
     post = post.merge(df_embedd,on='post_id', how='left')
 
     print(post.head())
 
-    # разобью по группам категориальный признак из Post
+    # Topci feature - add to categorial features list
     categorical_columns.append('topic')
 
-    # Выбираем только числовые столбцы таблицы Post для преобразования
-    numeric_columns = post.select_dtypes(include=['float64', 'int64']).columns
-
-    # Преобразуем только числовые столбцы в float32
+    # Convert numerical features of Post in float32
+    numeric_columns = post.select_dtypes(include=['float64', 'int64', 'float32', 'int32']).columns
     post[numeric_columns] = post[numeric_columns].astype('float32')
 
-    # Выбираем только числовые столбцы таблицы Feed для преобразования
-    numeric_columns = feed.select_dtypes(include=['float64', 'int64']).columns
-
-    # Преобразуем только числовые столбцы в float32
+    #
+    # Convert numerical features of Feed in float32
+    numeric_columns = feed.select_dtypes(include=['float64', 'int64', 'float32', 'int32']).columns
     feed[numeric_columns] = feed[numeric_columns].astype('float32')
 
     # Ренейм action на случай пересечений с колонками TD-IDF
     feed = feed.rename(columns={"action": "action_class"})
 
-    # Теперь нужно объединить все с таблицей Feed, чтобы получить мастер-таблицу для трейна
+    # Merge with Feed table - to obtain master dataframe
 
     df = pd.merge(
         feed,
@@ -593,26 +611,26 @@ def get_vector_df(df_embedd:pd.DataFrame, feed_n_lines=1024000):
 
     df = pd.merge(
         df,
-        new_user,
+        user,
         on='user_id',
         how='left'
     )
     df.head()
 
-    # Признак-счетчик лайков для постов
+    # Feature-counter for post likes
     df['action_class'] = df.action_class.apply(lambda x: 1 if x == 'like' or x == 1 else 0)
     df['post_likes'] = df.groupby('post_id')['action_class'].transform('sum')
 
-    # Признак-счетчик просмотров для постов
+    # Feature-counter for post views
     # df['views_per_post'] = df.groupby('post_id')['action_class'].apply(lambda x: 1 if x == 0 else 0).transform('sum')
     df['action_class'] = df.action_class.apply(lambda x: 0 if x == 'like' or x == 1 else 1)
     df['post_views'] = df.groupby('post_id')['action_class'].transform('sum')
     df['action_class'] = df.action_class.apply(lambda x: 1 if x == 'like' or x == 1 else 0)
 
-    # Поправим Datetime
+    # Parse timestamp
     df['timestamp'] = pd.to_datetime(df['timestamp'])
 
-    # Нужно отсортировать по time для валидации, по возрастанию
+    # Sort by the timestamp ascending
     df = df.sort_values('timestamp')
 
     # Набираю признаки из timestamp
@@ -622,12 +640,12 @@ def get_vector_df(df_embedd:pd.DataFrame, feed_n_lines=1024000):
     df['day'] = df.timestamp.dt.day
     df['year'] = df.timestamp.dt.year
 
-    # Фича-индикатор суммарного времени с 2021 года до текущего момента просмотра, в часах
+    # Feature - time counter starting from 2021 in hours
     df['time_indicator'] = (df['year'] - 2021) * 360 * 24 + df['month'] * 30 * 24 + df['day'] * 24 + df['hour']
 
-    categorical_columns.append('month')  # разобью по группам month  из Feed
+    categorical_columns.append('month')
 
-    # Генерим фичи: топ topic для пользователей из feed по лайкам/просмотрам
+    # Feature - top topic by likes/views for user
     main_liked_topics = df[df['action_class'] == 1].groupby(['user_id'])['topic'].agg(
         lambda x: np.random.choice(x.mode())).to_frame().reset_index()
     main_liked_topics = main_liked_topics.rename(columns={"topic": "main_topic_liked"})
@@ -635,76 +653,68 @@ def get_vector_df(df_embedd:pd.DataFrame, feed_n_lines=1024000):
         lambda x: np.random.choice(x.mode())).to_frame().reset_index()
     main_viewed_topics = main_viewed_topics.rename(columns={"topic": "main_topic_viewed"})
 
-    # Присоединяем к мастер-таблице
     df = pd.merge(df, main_liked_topics, on='user_id', how='left')
     df = pd.merge(df, main_viewed_topics, on='user_id', how='left')
 
-    # Заполняем пропуски самой частой категорией
+    # Fill NaNs with mode
     df['main_topic_liked'].fillna(df['main_topic_liked'].mode().item(), inplace=True)
     df['main_topic_viewed'].fillna(df['main_topic_viewed'].mode().item(), inplace=True)
 
-    # Разобью по группам категориальный признак из Feed
+    # Add new feature to the categorial features list
     categorical_columns.append('main_topic_viewed')
     categorical_columns.append('main_topic_liked')
 
-    # Признак-счетчик лайков по юзерам
+    # Feature - likes counter per user (total)
     likes_per_user = df.groupby(['user_id'])['action_class'].agg(pd.Series.sum).to_frame().reset_index()
     likes_per_user = likes_per_user.rename(columns={"action_class": "likes_per_user"})
 
-    # Признак-счетчик просмотров для юзеров
+    # Feature - views counter per post (total)
     # df['views_per_user'] = df.groupby('user_id')['action_class'].apply(lambda x: 1 if x == 0 else 0).transform('sum')
     df['action_class'] = df.action_class.apply(lambda x: 0 if x == 'like' or x == 1 else 1)
     df['views_per_user'] = df.groupby('user_id')['action_class'].transform('sum')
     df['action_class'] = df.action_class.apply(lambda x: 1 if x == 'like' or x == 1 else 0)
 
-    # Присоединяем к мастер-таблице
     df = pd.merge(df, likes_per_user, on='user_id', how='left')
 
-    # Выбираем только числовые столбцы для преобразования
+    # Convert all numeric to float32
     numeric_columns = df.select_dtypes(include=['float64', 'int64']).columns
-
     df[numeric_columns] = df[numeric_columns].astype('float32')
 
+    # Looking at the numbers of engaged users/posts
     num_user_df = df['user_id'].nunique()
-    print(f'Число уникальных юзеров в итоговом датасете:{num_user_df}')
-
+    print(f'Number of unique users in the master dataframe: {num_user_df}')
     num_post_df = df['post_id'].nunique()
-    print(f'Число уникальных постов в итоговом датасете:{num_post_df}')
+    print(f'Number of unique posts in the master dataframe:{num_post_df}')
 
-    # В датасете есть повторения, где у таргета и action_class несогласованны данные.
-    # При этом это одна и та же запись, по сути. Не буду убирать дублеры.
-    # Просто задам таргету 1 если у строки был лайк. Тем самым данные не будут противоречить друг другу
+    # Set target as 1 if action class means like
     df['target'] = df['target'].astype('int32')
     df['action_class'] = df['action_class'].astype('int32')
     df['target'] = df['target'] | df['action_class']
 
-    # Уберем лишние признаки
+    # Remove unnecessary features
     df = df.drop(['timestamp', 'action_class', 'os', 'source', 'day_of_week', 'year'], axis=1)
 
-    # Преобразуем численные категориальные в int32
+    # Convert numerical categorical to int32
     df[['exp_group', 'month']] = df[['exp_group', 'month']].astype('int32')
 
     print(categorical_columns)
 
-    # One-hot encoding для всех категориальных колонок
+    # One-hot encoding for all numerical columns
     for col in categorical_columns:
         one_hot = pd.get_dummies(df[col], prefix=col, drop_first=True, dtype='int32')
 
         df = pd.concat((df.drop(col, axis=1), one_hot), axis=1)
 
-    # Оставляю user_id и post_id, их нужно будет дропнуть при создании датасета
-    # df = df.drop(['user_id', 'post_id'], axis=1)
-
     df = df.astype('float32')
-    print('Итоговый датасет:')
+    print('Master dataframe:')
     print(df.head)
 
-    # сохраняю с user_id для генерации таблицы признаков для сервера
+    # Save with user_id and post_id for generation post/user features SQL tables
     df.to_csv('df_to_learn_mlp_128d_post_embedd.csv', sep=';', index=False)
 
-    # Получение общего объема памяти, занимаемой DataFrame
+    # Calculate master DF size
     total_memory = df.memory_usage(deep=True).sum()
-    print(f"\nОбщий объем памяти, занимаемой DataFrame: {total_memory} байт")
+    print(f"\nMemory size for the master DataFrame:  {total_memory} byte")
     print(df.dtypes)
 
     return df, categorical_columns, post

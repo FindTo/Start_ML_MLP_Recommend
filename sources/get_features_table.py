@@ -20,13 +20,13 @@ def get_user_post_features() -> (pd.DataFrame, pd.DataFrame, pd.DataFrame):
 
     # Read big DF from NN learning, with all features concatenated
     data = pd.read_csv('df_to_learn_mlp_128d_post_embedd.csv', sep=';')
-    # data = load_features()
 
-    print(data.shape)
+    print(f'Master df shape: {data.shape}')
     print(data.head())
     print(data.columns)
 
     # Saving original list of input features for NN apply
+    # Remove first columns - user_id, post_id, target
     list_of_columns_learning = data.columns.to_list()
     df_columns_learning = pd.DataFrame(list_of_columns_learning).drop([0, 1, 2], axis=0)
 
@@ -66,8 +66,25 @@ def get_user_post_features() -> (pd.DataFrame, pd.DataFrame, pd.DataFrame):
                          'month_12'
                          ]
 
+    # Choosing features to be dropped in DF from learning
+    list_to_take_post = ['post_id',
+                         'text_length',
+                         'post_likes',
+                         'post_views',
+                         'topic_covid',
+                         'topic_entertainment',
+                         'topic_movie',
+                         'topic_politics',
+                         'topic_sport',
+                         'topic_tech',
+                         ]
+
+    # Add embed features to the list
     for i in range(128):
         list_to_drop_user.append(f'embed_{i}')
+        list_to_take_post.append(f'embed_{i}')
+
+    # User features dataframe
 
     # Drop post-related and time-related features
     user_df_new = data.drop(list_to_drop_user, axis=1)
@@ -100,14 +117,23 @@ def get_user_post_features() -> (pd.DataFrame, pd.DataFrame, pd.DataFrame):
     df_user_full = user.merge(user_df_new, on='user_id', how='left')
     df_user_full = df_user_full.drop_duplicates()
     print(df_user_full.head())
+    print(f'df_user_full shape: {df_user_full.shape}')
+
+    user_columns_full = df_user_full.columns.tolist()
+    print(user_columns_full)
 
     # Fill empty features after merge with modes/mean values
     new_user_columns = ['main_topic_viewed_covid',
-                        'main_topic_viewed_entertainment', 'main_topic_viewed_movie',
-                        'main_topic_viewed_politics', 'main_topic_viewed_sport',
-                        'main_topic_viewed_tech', 'main_topic_liked_covid',
-                        'main_topic_liked_entertainment', 'main_topic_liked_movie',
-                        'main_topic_liked_politics', 'main_topic_liked_sport',
+                        'main_topic_viewed_entertainment',
+                        'main_topic_viewed_movie',
+                        'main_topic_viewed_politics',
+                        'main_topic_viewed_sport',
+                        'main_topic_viewed_tech',
+                        'main_topic_liked_covid',
+                        'main_topic_liked_entertainment',
+                        'main_topic_liked_movie',
+                        'main_topic_liked_politics',
+                        'main_topic_liked_sport',
                         'main_topic_liked_tech']
 
     for col in new_user_columns:
@@ -119,24 +145,14 @@ def get_user_post_features() -> (pd.DataFrame, pd.DataFrame, pd.DataFrame):
     total_memory = df_user_full.memory_usage(deep=True).sum()
     print(f"\ndf_user_full total memory: {total_memory} bytes")
 
-    # Read 'post' df with embedding-based PCA features
-    post = pd.read_csv('post_with_200xPCA_embed_1024k.csv', sep=';')
+    # Post features dataframe
 
-    # One-hot encoding for 'topic' feature
-    one_hot = pd.get_dummies(post['topic'], prefix='topic', drop_first=True, dtype='float32')
-    post = pd.concat((post.drop('topic', axis=1), one_hot), axis=1)
-
-    print(post.head())
-
-    # Choosing post-related features from big learning df
-    df_post_new = data[['post_id', 'post_likes', 'post_views']].drop_duplicates()
-
-    # Merge feed-based post features with original DF with PCA
-    df_post_full = post.merge(df_post_new, on='post_id', how='left')
-
-    # Fill empty values with mean
-    df_post_full['post_likes'] = df_post_full['post_likes'].fillna(df_post_full['post_likes'].mean())
-    df_post_full['post_views'] = df_post_full['post_views'].fillna(df_post_full['post_views'].mean())
+    # Choosing post-related features from big learning df -
+    # Total majority of posts - 97% - is already included in the master DF
+    # We need only filter right features
+    df_post_full = data[list_to_take_post].drop_duplicates()
+    print(f'df_post_full shape: {df_post_full.shape}')
+    print(df_post_full.columns.to_list())
 
     total_memory = df_post_full.memory_usage(deep=True).sum()
     print(f"\nPost DF total memory: {total_memory} bytes")

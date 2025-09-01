@@ -11,10 +11,11 @@ Retrieving data from tables User, Posts and Feed, the list of top recommended po
 by http request. 
 
 Here the MLP-based neural network model was implemented: features of user and item are being processed 
-and concatenated to be fed as input for fully-connected NN model. NN output - 1D logit, symbolizing score of like (converts to 
-probability of like via sigmoid function). Using this model, the top of predictions by user and posts is being taken for
-recommendation. Multi-layered NN approach can perceive more non-linear dependencies between features and target, comparing 
-with classic ML methods, otherwise, response time may be higher. 
+and concatenated to be fed as input for fully-connected NN model. NN output - 1D logit, symbolizing score of like 
+(converts to probability of like via sigmoid function). Using this model, the top of predictions by user and posts is 
+being taken for recommendation. Multi-layered NN approach can perceive more non-linear dependencies between features and 
+target, comparing with classic ML methods, otherwise, response time may be higher. 
+
 ---
 
 # Input SQL tables structure
@@ -59,18 +60,21 @@ The **main_script.py** contains all feature preparation functions and calls, you
 But .env file will be necessary for DB connections and output features file naming.
 The basic pipelane: generate BERT-like embeddings for post texts using HuggingFace Roberta, then compress it to 128D. 
 An MLP autoencoder is being used for this purpose. After that fetching process starts from the DB tables User_data,
-Post_text_df and Feed_data, to prepare features vectors for 2Tower NN train. Afterward, the NN training process starts, 
-producing model .pt file and history of epochs with ROC & accuracy at train/test. Also, there is an option to download
-local user and posts from the corresponding NN towers outputs.
+Post_text_df and Feed_data, to prepare features vectors for MLP NN train dataset. Then the NN training process 
+starts, producing model .pt file and history of epochs with ROC & accuracy at train/test. Additionally, the master 
+dataframe with features for learning gets separated into User_Features_DF (with all users from User_data + new features)
+and Post_Features_DF (posts which have been taken in master_df - total majority). These dataframes are being sent to SQL
+database - it's features are used for NN inference predictions.
 
 The **app.py** is used for web service operation. User_ID and timestamp are being received as an input. Then endpoint
-function generates user tower embedding, normalizes and dots it with all item embeddings. The obtained list of scores 
-therefore helps to create a top of n posts. Activation using `uvicorn app:app --port 8000`, or with another port. 
+function generates user features vector and combines it with post features vectors. The resulting vector is being used 
+as an input for NN model (inference mode). Thus, logits vector gets converted into probabilities using sigmmoid, and the
+top probable post make output. Activation using `uvicorn app:app --port 8000`, or with another port. 
 Example of http query (GET method): 
 http://startml2towerrecommend-production.up.railway.app/post/recommendations/?id=121245&time=2021-01-06 12:41:55
 
-File **learn_model.py** contains classes and functions for 2Tower and MLP autoencoder training, including datasets 
-preparations. That's all is used in **main_script.py**.
+File **learn_model.py** contains classes and functions for recommendation NN and post autoencoder training, including 
+datasets preparations. That's all is used in **main_script.py**.
 
 Module **get_model.py** is only aimed for .pt file downloading on remote or locally.
 
@@ -91,13 +95,3 @@ actuality with limit=LIMIT
 user_id=ID at moment of time=TIMESTAMP (string datetime format %Y-%m-%d %H:%M:%S). There is the core endpoint for
 recommendations.
 
-
-
-
-
-
-
-
- 
-
-[Dockerfile](../2Tower_Recommend/Dockerfile)

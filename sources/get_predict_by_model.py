@@ -20,6 +20,11 @@ def load_models():
 
     model.load_state_dict(torch.load(model_path,
                     map_location=torch.device('cpu')))
+
+    # Check CUDA
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    model = model.to(device)
+
     model.eval()
 
     return model
