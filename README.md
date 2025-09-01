@@ -54,7 +54,7 @@ like actions.
 
 - There is a dockerfile and .dockerignore inside the project, which are aimed for server version with **Python 3.11** and 
 **Torch 2.71+cpu**. Docker version is supposed for web service demonstration at 
-https://startml2towerrecommend-production.up.railway.app/, where you can try to send query and receive a response.
+https://startmlmlprecommend-production.up.railway.app/, where you can try to send query and receive a response.
 
 The **main_script.py** contains all feature preparation functions and calls, you can launch it cnd check process. 
 But .env file will be necessary for DB connections and output features file naming.
@@ -71,7 +71,7 @@ function generates user features vector and combines it with post features vecto
 as an input for NN model (inference mode). Thus, logits vector gets converted into probabilities using sigmmoid, and the
 top probable post make output. Activation using `uvicorn app:app --port 8000`, or with another port. 
 Example of http query (GET method): 
-http://startml2towerrecommend-production.up.railway.app/post/recommendations/?id=121245&time=2021-01-06 12:41:55
+http://startmlmlprecommend-production.up.railway.app/post/recommendations/?id=121245&time=2021-01-06 12:41:55
 
 File **learn_model.py** contains classes and functions for recommendation NN and post autoencoder training, including 
 datasets preparations. That's all is used in **main_script.py**.

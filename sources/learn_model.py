@@ -284,23 +284,23 @@ def create_nn_to_classify():
 
             self.fc1 = nn.Sequential(
 
-                nn.Linear(173, 256),
-                nn.BatchNorm1d(256),
+                nn.Linear(173, 128),
+                nn.BatchNorm1d(128),
                 nn.ReLU(),
                 nn.Dropout(p=0.3),
             )
 
             self.fc2 = nn.Sequential(
 
-                nn.Linear(256, 256),
-                nn.BatchNorm1d(256),
+                nn.Linear(128, 128),
+                nn.BatchNorm1d(128),
                 nn.ReLU(),
+                nn.Dropout(p=0.3),
             )
 
             self.fc3 = nn.Sequential(
 
-                nn.Dropout(p=0.3),
-                nn.Linear(256, 64),
+                nn.Linear(128, 64),
                 nn.BatchNorm1d(64),
                 nn.ReLU(),
                 nn.Dropout(p=0.3),
@@ -308,11 +308,11 @@ def create_nn_to_classify():
 
             self.output = nn.Sequential(
 
-                nn.Linear(64, 32),
-                nn.BatchNorm1d(32),
+                nn.Linear(64, 16),
+                nn.BatchNorm1d(16),
                 nn.ReLU(),
                 nn.Dropout(p=0.2),
-                nn.Linear(32, 1),
+                nn.Linear(16, 1),
             )
 
 
