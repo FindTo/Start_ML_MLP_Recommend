@@ -571,7 +571,7 @@ def get_vector_df(df_embedd:pd.DataFrame, feed_n_lines=1024000):
 
     # Ready User table
     print(user.head())
-    print(f'Number of the unique users:{user['user_id'].nunique()}')
+    print(f"Number of the unique users:{user['user_id'].nunique()}")
 
     # Working with Post table
     # Text length - new Post feature
